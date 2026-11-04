@@ -26,3 +26,18 @@ read -r -p "Nombre del Dominio (ej. lab.local): " DOMINIO
 
 - **`-p "Mensaje"` (Prompt)**: Permite mostrar un mensaje explicativo en la pantalla esperando la respuesta en la misma línea. Nos ahorra tener que escribir un comando `echo` antes del `read`.
 
+# Verifica que el script se ejecute con privilegios de root 
+```bash
+verificar_root() { if [[ "${EUID}" -ne 0 ]]; then log_error "Este script debe ejecutarse como root (usa sudo)." fi }
+```
+
+# Ejemplo de copia con cambio de extension de archivos .bak
+```bash
+for archivo in *.bak; do cp "$archivo" "${archivo%.bak}.docu"; done
+```
+
+
+ Imprime mensajes informativos en verde para saber por dónde va el script 
+ ```bash
+ log_info() { echo -e "\n\e[32m[INFO]\e[0m $1" } # Imprime errores en rojo y sale del script log_error() { echo -e "\n\e[31m[ERROR]\e[0m $1" >&2 exit 1 }
+ ```
