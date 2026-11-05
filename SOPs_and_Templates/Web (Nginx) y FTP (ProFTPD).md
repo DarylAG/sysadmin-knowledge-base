@@ -49,21 +49,24 @@ nano /etc/network/interfaces
 ```
 
 **Acción:** Definir la resolución DNS. **Comando:*
-```
+```bash
 nano /etc/resolv.conf
-	nameserver <IP_DNS>
-	search <DOMINIO_WEB>
+```
+
+```conf
+nameserver <IP_DNS>
+search <DOMINIO_WEB>
 ```
 
 **Acción:** Actualizar repositorios e instalar paquetes base. **Comando:**
-```
+```bash
 apt update && apt upgrade -y
 ```
 
 ## 3. Despliegue y Configuración de Nginx
 
 **Acción:** Instalar Nginx y crear el directorio raíz para el sitio web. **Comandos:**
-```
+```bash
 apt install nginx -y
 mkdir -p <RUTA_RAIZ_WEB>/html
 ```
@@ -71,7 +74,7 @@ mkdir -p <RUTA_RAIZ_WEB>/html
 **Acción:** Transferir y asegurar los certificados SSL/TLS emitidos por su CA.
 **Comandos:**
 Asumiendo que los archivos ya fueron transferidos al servidor
-```
+```bash
 mv <LLAVE_SSL>.key /etc/ssl/private/
 chown root:root /etc/ssl/private/<LLAVE_SSL>.key
 chmod 600 /etc/ssl/private/<LLAVE_SSL>.key
@@ -87,14 +90,55 @@ chmod 644 /etc/ssl/certs/<CERTIFICADO_SSL>.crt
 
 **Acción:** Crear el archivo de configuración del sitio web (Virtual Host) forzando HTTPS.
 **Comando:**
-```
+```bash
 nano /etc/nginx/sites-available/<DOMINIO_WEB>
 ```
-[[<DOMINIO_WEB>]]
+
+```conf
+# Redirección obligatoria de HTTP a HTTPS
+server {
+    # Puerto de escucha para HTTP
+    listen 80;
+    
+    # Nombres de dominio que responderán a este bloque
+    server_name <DOMINIO_WEB> www.<DOMINIO_WEB>;
+    
+    # Redirección 301 permanente hacia la versión segura
+    return 301 https://$host$request_uri;
+}
+
+# Bloque principal para conexiones HTTPS
+server {
+    # Puerto de escucha para HTTPS
+    listen 443 ssl;
+    server_name <DOMINIO_WEB> www.<DOMINIO_WEB>;
+
+    # Directorio raíz y archivos índice
+    root <RUTA_RAIZ_WEB>/html;
+    index index.html index.htm;
+
+    # Rutas a los certificados SSL emitidos por la CA
+    ssl_certificate /etc/ssl/certs/<CERTIFICADO_SSL>.crt;
+    ssl_certificate_key /etc/ssl/private/<LLAVE_SSL>.key;
+
+    # Protocolos y cifrados seguros permitidos
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Procesamiento de las peticiones a la raíz
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Cabeceras de seguridad adicionales
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+}
+```
 
 **Acción:** Habilitar el sitio mediante un enlace simbólico. 
 **Comando:**
-```
+```bash
 ln -s /etc/nginx/sites-available/<DOMINIO_WEB> /etc/nginx/sites-enabled/
 ```
 
@@ -102,7 +146,7 @@ ln -s /etc/nginx/sites-available/<DOMINIO_WEB> /etc/nginx/sites-enabled/
 
 **Acción:** Crear un usuario de sistema sin acceso a shell interactiva, pero con permisos para administrar el directorio web. 
 **Comandos:**
-```
+```bash
 useradd -m -d <RUTA_RAIZ_WEB> -s /usr/sbin/nologin <USUARIO_FTP>
 passwd <USUARIO_FTP>
 chown -R <USUARIO_FTP>:www-data <RUTA_RAIZ_WEB>
@@ -113,27 +157,128 @@ chmod -R 775 <RUTA_RAIZ_WEB>
 
 **Acción:** Instalar el servidor ProFTPD y su módulo criptográfico para soporte TLS.
 **Comando:**
-```
+```bash
 apt install proftpd-basic proftpd-mod-crypto -y
 ```
 
 **Acción:** Configurar los parámetros principales del servidor FTP, enjaulando al usuario y restringiendo accesos.
 **Comando:**
-```
+```bash
 nano /etc/proftpd/proftpd.conf
 ```
-[[proftpd.conf]]
+
+```conf
+# Carga de módulos dinámicos
+Include /etc/proftpd/modules.conf
+
+# Soporte IPv6 activado
+UseIPv6 on
+
+<IfModule mod_ident.c>
+    # Desactivar peticiones de identificación para evitar demoras en la conexión
+    IdentLookups off
+</IfModule>
+
+# Nombre del servidor que verán los clientes al conectarse
+ServerName "<HOSTNAME> FTP Server"
+
+# Configuración del demonio como servidor independiente principal
+ServerType standalone
+DefaultServer on
+
+# Tiempos máximos de espera (en segundos)
+TimeoutNoTransfer 600
+TimeoutStalled 600
+TimeoutIdle 1200
+
+# Opciones de presentación y filtros de seguridad
+DeferWelcome off
+ShowSymlinks on
+DisplayLogin welcome.msg
+DisplayChdir .message true
+ListOptions "-l"
+DenyFilter \*.*/
+
+# Enjaular a todos los usuarios dentro de sus directorios base por seguridad (Chroot)
+DefaultRoot ~
+
+# Permitir el acceso a usuarios que no poseen una shell interactiva (ej. /usr/sbin/nologin)
+RequireValidShell off
+
+# Puerto estándar de conexión FTP
+Port 21
+
+# Rango de puertos pasivos para conexiones a través de Firewalls o NAT (Descomentar si aplica)
+# PassivePorts <PUERTOS_PASIVOS_INICIO> <PUERTOS_PASIVOS_FIN>
+
+# Límite de conexiones simultáneas para mitigar ataques DoS
+MaxInstances 30
+
+# Usuario y grupo bajo los que opera el servicio ProFTPD
+User proftpd
+Group nogroup
+
+# Máscara de permisos por defecto para los archivos/directorios nuevos y sobreescritura
+Umask 022 022
+AllowOverwrite on
+
+# Rutas de los logs de transferencias y eventos generales del servicio
+TransferLog /var/log/proftpd/xferlog
+SystemLog /var/log/proftpd/proftpd.log
+
+<IfModule mod_delay.c>
+    # Mitigación de ataques de temporización (Timing Attacks)
+    DelayEngine on
+</IfModule>
+
+# Inclusión del archivo de configuración para conexiones seguras (FTPS)
+Include /etc/proftpd/tls.conf
+
+# Bloque de seguridad: Restringir el inicio de sesión FTP ÚNICAMENTE a nuestro usuario web
+<Limit LOGIN>
+  AllowUser <USUARIO_FTP>
+  DenyAll
+</Limit>
+
+# Directorio para otras configuraciones personalizadas
+Include /etc/proftpd/conf.d/
+```
 
 **Acción:** Configurar el módulo TLS de ProFTPD para habilitar FTPS explícito y forzar conexiones cifradas.
 **Comando:**
-```
+```bash
 nano /etc/proftpd/tls.conf
 ```
-[[tls.conf]]
+
+```conf
+<IfModule mod_tls.c>
+    # Habilitar el motor criptográfico TLS
+    TLSEngine on
+
+    # Ruta del archivo de registro específico para eventos y errores TLS
+    TLSLog /var/log/proftpd/tls.log
+
+    # Restringir las conexiones a protocolos seguros modernos
+    TLSProtocol TLSv1.2 TLSv1.3
+
+    # Rutas del certificado público y la llave privada del servidor
+    TLSRSACertificateFile /etc/ssl/certs/<CERTIFICADO_SSL>.crt
+    TLSRSACertificateKeyFile /etc/ssl/private/<LLAVE_SSL>.key
+
+    # Ruta del certificado de la Autoridad Certificadora (CA) de confianza
+    TLSCACertificateFile /etc/ssl/certs/<CERTIFICADO_CA>.crt
+
+    # Desactivar la exigencia de un certificado del lado del cliente
+    TLSVerifyClient off
+
+    # FORZAR a los clientes a utilizar FTP sobre TLS (rechaza conexiones de texto plano)
+    TLSRequired on
+</IfModule>
+```
 
 **Acción:** Habilitar configuraciones necesarias de módulos.
 **Comando:**
-```
+```bash
 nano /etc/proftpd/modules.conf
 ```
 _(Nota: Verifique que la línea `LoadModule mod_tls.c` esté sin comentar)._

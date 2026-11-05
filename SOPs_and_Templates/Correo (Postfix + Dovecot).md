@@ -86,14 +86,95 @@ apt update && apt install -y postfix mailutils
 ```
 
 **Acción:** Respaldar y optimizar la configuración principal (`main.cf`).
-[[main.cf|main.cf]]
+```conf
+# Nivel de compatibilidad y dominios
+compatibility_level = 3.9
+mydomain = <DOMINIO_PRINCIPAL>
+myorigin = $mydomain
+myhostname = <FQDN_CORREO>
+mydestination = $myhostname, <DOMINIO_PRINCIPAL>, localhost.$mydomain, localhost
+
+# Red e Interfaces
+inet_protocols = ipv4
+inet_interfaces = all
+mynetworks_style = host
+mynetworks = 127.0.0.0/8 <RED_LOCAL>
+
+# Buzones de correo (Maildir)
+mailbox_size_limit = 0
+home_mailbox = Maildir/
+mailbox_command = 
+recipient_delimiter = +
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+
+# Configuración TLS
+smtpd_tls_key_file = /etc/ssl/private/<HOSTNAME_CORREO>.key
+smtpd_tls_cert_file = /etc/ssl/certs/<HOSTNAME_CORREO>.crt
+smtp_tls_CAfile = /etc/ssl/certs/ca-root.crt
+smtpd_tls_security_level = may
+smtp_tls_security_level = may
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtpd_tls_auth_only = yes
+smtpd_tls_loglevel = 1
+
+# Autenticación SASL integrada con Dovecot
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_security_options = noanonymous
+smtpd_sasl_local_domain = $myhostname
+
+# Restricciones de envío
+smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+```
 
 **Acción:** Respaldar y configurar el proceso maestro (`master.cf`) para habilitar el puerto de envío seguro SMTP Submission (587).
 ```
 cp /etc/postfix/master.cf /etc/postfix/master.cf.bak
 nano /etc/postfix/master.cf
 ```
-[[master.cf|master.cf]]
+
+```conf
+smtp      inet  n       -       y       -       -       smtpd
+
+
+
+submission inet n       -       y       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_sasl_type=dovecot
+  -o smtpd_sasl_path=private/auth
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+pickup    unix  n       -       y       60      1       pickup
+cleanup   unix  n       -       y       -       0       cleanup
+qmgr      unix  n       -       n       300     1       qmgr
+tlsmgr    unix  -       -       y       1000?   1       tlsmgr
+rewrite   unix  -       -       y       -       -       trivial-rewrite
+bounce    unix  -       -       y       -       0       bounce
+defer     unix  -       -       y       -       0       bounce
+trace     unix  -       -       y       -       0       bounce
+verify    unix  -       -       y       -       1       verify
+flush     unix  n       -       y       1000?   0       flush
+proxymap  unix  -       -       n       -       -       proxymap
+proxywrite unix -       -       n       -       1       proxymap
+smtp      unix  -       -       y       -       -       smtp
+relay     unix  -       -       y       -       -       smtp
+        -o syslog_name=${multi_instance_name?{$multi_instance_name}:{postfix}}/$service_name
+showq     unix  n       -       y       -       -       showq
+error     unix  -       -       y       -       -       error
+retry     unix  -       -       y       -       -       error
+discard   unix  -       -       y       -       -       discard
+local     unix  -       n       n       -       -       local
+virtual   unix  -       n       n       -       -       virtual
+lmtp      unix  -       -       y       -       -       lmtp
+anvil     unix  -       -       y       -       1       anvil
+scache    unix  -       -       y       -       1       scache
+postlog   unix-dgram n  -       n       -       1       postlogd
+
+```
 
 # 5. Instalación y Configuración de Dovecot (IMAP/POP3)
 
@@ -107,21 +188,108 @@ apt install -y dovecot-imapd dovecot-pop3d
 cp /etc/dovecot/conf.d/10-ssl.conf /etc/dovecot/conf.d/10-ssl.conf.bak
 nano /etc/dovecot/conf.d/10-ssl.conf
 ```
-[[10-ssl.conf|10-ssl.conf]]
+
+```conf
+# Requerir SSL y definir rutas de certificados
+ssl = required
+ssl_server_cert_file = /etc/ssl/certs/<HOSTNAME_CORREO>.crt
+ssl_server_key_file = /etc/ssl/private/<HOSTNAME_CORREO>.key
+ssl_server_ca_file = /etc/ssl/certs/ca-root.crt
+
+# Protocolo mínimo aceptado
+ssl_min_protocol = TLSv1.2
+```
 
 **Acción:** Respaldar y configurar los mecanismos de autenticación (`10-auth.conf`).
 ```
 cp /etc/dovecot/conf.d/10-auth.conf /etc/dovecot/conf.d/10-auth.conf.bak
 nano /etc/dovecot/conf.d/10-auth.conf
 ```
-[[10-auth.conf|10-auth.conf]]
+
+```conf
+!include auth-system.conf.ext
+
+```
 
 **Acción:** Respaldar y configurar los sockets de autenticación para Postfix (`10-master.conf`).
 ```
 cp /etc/dovecot/conf.d/10-master.conf /etc/dovecot/conf.d/10-master.conf.bak
 nano /etc/dovecot/conf.d/10-master.conf
 ```
-[[10-master.conf|10-master.conf]]
+
+```conf
+service imap-login {
+  inet_listener imap {
+
+  }
+  inet_listener imaps {
+
+  }
+}
+
+service pop3-login {
+  inet_listener pop3 {
+
+  }
+  inet_listener pop3s {
+
+
+  }
+}
+
+service submission-login {
+  inet_listener submission {
+
+  }
+  inet_listener submissions {
+
+  }
+}
+
+service lmtp {
+  unix_listener lmtp {
+
+  }
+
+}
+
+service imap {
+}
+
+service pop3 {
+
+}
+
+service submission {
+
+}
+
+service auth {
+  unix_listener auth-userdb {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0666
+    user = postfix
+    group = postfix  
+}
+
+}
+
+service auth-worker {
+
+}
+
+service dict {
+  unix_listener dict {
+
+  }
+}
+
+```
 
 ## 6. Creación de Usuarios y Estructura Maildir
 

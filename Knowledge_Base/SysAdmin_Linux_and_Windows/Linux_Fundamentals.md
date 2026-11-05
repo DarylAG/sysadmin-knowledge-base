@@ -245,3 +245,12 @@ Cambia los repositorios espejo de Debian hacia la UCR
 deb https://espejos.ucr.ac.cr/debian trixie main contrib non-free non-free-firmware
 deb https://espejos.ucr.ac.cr/debian trixie-updates main contrib non-free non-free-firmware
 ```
+
+file /bin/rm
+
+echo $PATH | tr : '\n'
+
+bash -n
+
+bash -x
+

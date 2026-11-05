@@ -10,16 +10,16 @@ Antes de aplicar esta configuración, reemplaza los siguientes marcadores según
 
 ## 1. Instalación y Configuración Básica (VirtualHost en puerto 80)
 **Acción:** Instalar Apache2.
-```
+```bash
 apt update && apt install -y apache2
 ```
 
 **Acción:** Crear el archivo de configuración (VirtualHost) para el sitio principal.
-```
+```bash
 nano /etc/apache2/sites-available/<DOMINIO>.conf
 ```
 
-```
+```conf
 # VirtualHost para el sitio web principal
 <VirtualHost *:80> 
     ServerAdmin webmaster@<DOMINIO>
@@ -37,7 +37,7 @@ nano /etc/apache2/sites-available/<DOMINIO>.conf
 ```
 
 **Acción:** Crear el directorio raíz del sitio y su página de inicio.
-```
+```bash
 mkdir -p /var/www/html/<DOMINIO>
 nano /var/www/html/<DOMINIO>/index.html
 ```
@@ -58,7 +58,7 @@ nano /var/www/html/<DOMINIO>/index.html
 
 
 **Acción:** Habilitar el nuevo sitio, deshabilitar el sitio por defecto y recargar el servicio.
-```
+```bash
 a2ensite <DOMINIO>.conf
 a2dissite 000-default.conf
 systemctl reload apache2
@@ -67,11 +67,11 @@ systemctl reload apache2
 ## 2. Configuración de Sitio en Puerto Alternativo (VirtualHost en otro puerto)
 
 **Acción:** Modificar el archivo de puertos para que Apache escuche en el nuevo puerto.
-```
+```bash
 nano /etc/apache2/ports.conf
 ```
 
-```
+```conf
 # /etc/apache2/ports.conf
 # Archivo de definición de puertos de escucha para Apache2
 
@@ -90,11 +90,11 @@ Listen <PUERTO_ALT>
 ```
 
 **Acción:** Crear el VirtualHost para el segundo sitio.
-```
+```bash
 nano /etc/apache2/sites-available/segundo.conf
 ```
 
-```
+```conf
 # VirtualHost para el sitio en puerto alternativo
 <VirtualHost *:<PUERTO_ALT>>
     ServerName <DOMINIO_SECUNDARIO>
@@ -109,7 +109,7 @@ nano /etc/apache2/sites-available/segundo.conf
 ```
 
 **Acción:** Crear el directorio raíz y la página de prueba, habilitar el sitio y reiniciar.
-```
+```bash
 mkdir -p /var/www/html/segundo
 nano /var/www/html/segundo/index.html
 # (Pega un HTML básico que diga "Hola desde puerto alternativo")
@@ -121,14 +121,14 @@ systemctl restart apache2
 ## 3. Sitios Web Personales para Usuarios del Sistema (UserDir)
 
 **Acción:** Crear un usuario (si no existe), habilitar el módulo `userdir` y reiniciar el servicio.
-```
+```bash
 adduser <USUARIO>
 a2enmod userdir
 systemctl restart apache2
 ```
 
 **Acción:** Crear la carpeta `public_html` dentro del perfil del usuario, asignar permisos correctos y crear su página web.
-```
+```bash
 mkdir /home/<USUARIO>/public_html
 chown <USUARIO>:<USUARIO> /home/<USUARIO>/public_html
 chmod 755 /home/<USUARIO>

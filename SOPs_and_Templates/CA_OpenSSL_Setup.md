@@ -52,8 +52,75 @@ openssl rand -hex 16 > <DIR_CA>/serial
 # 3. Archivo de Configuración de la CA (`root-ca.conf`)
 
 Cree el archivo `<DIR_CA>/root-ca.conf` con el siguiente contenido optimizado. Este archivo define las políticas de firma y las extensiones criptográficas necesarias para la CA y los certificados emitidos.
-[[root-ca.conf|root-ca.conf]]
 
+```conf
+[ ca ]
+# Define la sección por defecto para el comando 'ca'
+default_ca = CA_default
+
+[ CA_default ]
+# Rutas de la estructura de directorios
+dir           = <DIR_CA>
+certs         = $dir/certs
+new_certs_dir = $dir/newcerts
+database      = $dir/index
+serial        = $dir/serial
+RANDFILE      = $dir/private/.rand
+
+# Archivos de la CA (Llave privada y Certificado público)
+certificate   = $dir/certs/<NOMBRE_CA>.crt
+private_key   = $dir/private/<NOMBRE_CA>.key
+
+# Parámetros criptográficos y de emisión
+default_md    = sha256
+name_opt      = ca_default
+cert_opt      = ca_default
+default_days  = 365
+preserve      = no
+policy        = policy_strict
+
+[ policy_strict ]
+# Requisitos de los campos del Subject para que la CA firme el certificado
+countryName             = supplied
+stateOrProvinceName     = supplied
+organizationName        = supplied
+organizationalUnitName  = optional
+commonName              = supplied
+emailAddress            = optional
+
+[ req ]
+# Parámetros para la generación de solicitudes (CSR)
+default_bits        = 2048
+distinguished_name  = req_distinguished_name
+string_mask         = utf8only
+default_md          = sha256
+x509_extensions     = v3_ca
+
+[ req_distinguished_name ]
+# Plantilla interactiva de campos (Ignorada si se usa prompt=no en el CSR)
+countryName         = Country Name (2 letter code)
+stateOrProvinceName = State or Province Name
+localityName        = Locality Name
+organizationName    = Organization Name
+commonName          = Common Name
+
+[ v3_ca ]
+# Extensiones obligatorias para un certificado de Autoridad Certificadora
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:TRUE
+keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+
+[ server_cert ]
+# Extensiones estándar para certificados de servidor final
+basicConstraints       = CA:FALSE
+nsCertType             = server
+nsComment              = "Certificado Digital para Servidor Interno"
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer:always
+keyUsage               = critical, digitalSignature, keyEncipherment
+extendedKeyUsage       = serverAuth
+```
 ## 4. Generación de la Llave y Certificado Root CA
 
 **Acción:** Generar la llave privada de la CA utilizando cifrado AES-256 y un tamaño de 4096 bits para máxima seguridad. Luego, restringir los permisos del archivo.
@@ -103,8 +170,34 @@ Este proceso debe repetirse para cada servicio (Web, Correo, Proxy, etc.) adapta
 ### 6.1. Archivo de Configuración CSR del Nodo (`<NOMBRE_NODO>-csr.conf`)
 
 Cree un archivo específico para el nodo en `<DIR_CA>/csr/<NOMBRE_NODO>-csr.conf`. Este enfoque inyecta el _Subject Alternative Name (SAN)_ directamente en la petición, lo cual es un requisito estricto de los navegadores modernos.
-[[<NOMBRE_NODO>-csr.conf]]
 
+```conf
+[ req ]
+default_bits       = 2048
+default_md         = sha256
+distinguished_name = req_distinguished_name
+req_extensions     = req_ext
+prompt             = no
+
+[ req_distinguished_name ]
+# Reemplazar con variables reales
+countryName            = <PAIS>
+stateOrProvinceName    = <ESTADO>
+localityName           = <LOCALIDAD>
+organizationName       = <ORGANIZACION>
+commonName             = <DOMINIO>
+
+[ req_ext ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+# Nombres alternativos (FQDN, hostnames cortos y Direcciones IP)
+DNS.1 = <DOMINIO>
+DNS.2 = www.<DOMINIO>
+DNS.3 = <NOMBRE_NODO>
+IP.1  = <IP_NODO>
+
+```
 ### 6.2. Creación y Firma del Certificado del Nodo
 
 **Acción:** Generar la llave privada (2048 bits) para el servidor final.
@@ -131,7 +224,7 @@ openssl ca -config <DIR_CA>/root-ca.conf -notext \
   -in <DIR_CA>/csr/<NOMBRE_NODO>.csr \
   -out <DIR_CA>/certs/<NOMBRE_NODO>.crt \
   -extensions req_ext \
-  -extfile <DIR_CA>/csr/<NOMBRE_NODO>-csr.conf -batch[cite: 1]
+  -extfile <DIR_CA>/csr/<NOMBRE_NODO>-csr.conf -batch
 ```
 
 ## 7. Verificación y Troubleshooting

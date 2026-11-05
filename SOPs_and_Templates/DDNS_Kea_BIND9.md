@@ -83,25 +83,100 @@ Configurar las opciones globales de BIND9.
 ```
 nano /etc/bind/named.conf.options
 ```
-[[named.conf.options|named.conf.options]]
+
+```conf
+// Definir red confiable
+acl trusted {
+        localhost;
+        localnets;
+        <SUBRED_CIDR>;
+};
+
+options {
+        directory "/var/cache/bind";
+        recursion yes;
+        
+        // Permisos de consulta y recursión
+        allow-query { trusted; };
+        allow-query-cache { trusted; };
+        allow-recursion { trusted; };
+
+        // Servidores DNS externos
+        forwarders{
+                8.8.8.8;
+                8.8.4.4;
+        };
+        
+        dnssec-validation auto;
+        listen-on-v6 port 53 { ::1; };
+        listen-on port 53 { 127.0.0.1; <IP_SERVIDOR>; };
+};
+```
 
 Configurar las zonas locales permitiendo la actualización mediante la llave TSIG.
 ```
 nano /etc/bind/named.conf.local
 ```
-[[named.conf.local|named.conf.local]]
+
+```
+// Incluir la llave generada
+include "/etc/bind/<NOMBRE_LLAVE_TSIG>.key";
+
+// Zona Directa
+zone "<DOMINIO>" {
+    type master;
+    // Las zonas deben estar en /var/lib/bind para que el usuario bind tenga permisos de escritura en DDNS
+    file "/var/lib/bind/db.<DOMINIO>";
+    update-policy {
+        grant <NOMBRE_LLAVE_TSIG> wildcard *.<DOMINIO> A DHCID;
+    };
+};
+
+// Zona Inversa
+zone "<ZONA_INVERSA_ARPA>.in-addr.arpa" {
+    type master;
+    file "/var/lib/bind/db.<ZONA_INVERSA_ARPA>";    
+    update-policy {
+        grant <NOMBRE_LLAVE_TSIG> wildcard *.<ZONA_INVERSA_ARPA>.in-addr.arpa PTR DHCID;
+   };
+};
+```
 
 Crear el archivo de la zona directa.
 ```
 nano /var/lib/bind/db.<DOMINIO>
 ```
-[[db.<DOMINIO>]]
+
+```
+$TTL 604800	; 1 week
+<DOMINIO>.		IN SOA	<HOSTNAME_PRIMARIO>.<DOMINIO>. admin.<DOMINIO>. (
+				2026102249 ; serial
+				604800     ; refresh 
+				86400      ; retry 
+				2419200    ; expire 
+				604800     ; minimum 
+				)
+			NS	<HOSTNAME_PRIMARIO>.<DOMINIO>.
+<HOSTNAME_PRIMARIO>.<DOMINIO>.		A	<IP_SERVIDOR>
+```
 
 Crear el archivo de la zona inversa.
 ```
 nano /var/lib/bind/db.<ZONA_INVERSA_ARPA>
 ```
-[[db.<ZONA_INVERSA_ARPA>]]
+
+```
+$TTL 604800	; 1 week
+<ZONA_INVERSA_ARPA>.in-addr.arpa. IN SOA <HOSTNAME_PRIMARIO>.<DOMINIO>. admin.<DOMINIO>. (
+				2026101731 ; serial
+				604800     ; refresh 
+				86400      ; retry 
+				2419200    ; expire 
+				604800     ; minimum 
+				)
+			NS	<HOSTNAME_PRIMARIO>.<DOMINIO>.
+1.<ZONA_INVERSA_ARPA>.in-addr.arpa. PTR	<HOSTNAME_PRIMARIO>.<DOMINIO>.
+```
 
 Corregir permisos y reiniciar BIND9.
 ```
@@ -217,7 +292,7 @@ more /var/lib/kea/kea-leases4.csv
 # 5. Funciones Avanzadas y Próximos Pasos
 
 - **Implementación de DNSSEC**: Firmar criptográficamente las zonas para garantizar la integridad y autenticidad de las respuestas DNS.
-    
+
 - **Alta Disponibilidad (HA)**: Configurar un servidor BIND9 secundario (esclavo) con transferencias de zona (`AXFR`) y establecer el esquema de alta disponibilidad nativo de Kea DHCP para redundancia activa-pasiva o activa-activa.
-    
+
 - **Base de datos backend para Kea**: Migrar el almacenamiento de concesiones (leases) del archivo CSV en memoria a un motor relacional sólido (como PostgreSQL o MySQL) para entornos empresariales escalables.

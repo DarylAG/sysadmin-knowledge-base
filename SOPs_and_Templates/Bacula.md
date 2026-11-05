@@ -27,7 +27,7 @@ cp /etc/bacula/bacula-dir.conf /etc/bacula/bacula-dir.conf.bak
 nano /etc/bacula/bacula-dir.conf
 ```
 
-```text
+```bacula-dir
 # SERVICIO: El Director es el cerebro del clúster. Orquesta las tareas de respaldo,
 
 # se comunica con los clientes (FD), envía los datos al almacenamiento (SD)
@@ -402,9 +402,10 @@ CommandACL = status, .status
 CONFIGURACIÓN DE BACULA (STORAGE DAEMON)
 ```bash
 cp /etc/bacula/bacula-sd.conf /etc/bacula/bacula-sd.conf.bak
+nano /etc/bacula/bacula-sd.conf
 ```
 
-```text
+```bacula-sd
 Storage {
 
 Name = bacula-sd
@@ -491,9 +492,10 @@ director = bacula-dir = all
 CONFIGURACIÓN DE BACULA (BCONSOLE)
 ```bash
 cp /etc/bacula/bconsole.conf /etc/bacula/bconsole.conf.bak
+nano /etc/bacula/bconsole.conf
 ```
 
-```text
+```bconsole
 Director {
 
 Name = bacula-dir
@@ -531,7 +533,7 @@ cp /etc/bacula/bacula-fd.conf /etc/bacula/bacula-fd.conf.bak
 nano /etc/bacula/bacula-fd.conf
 ```
 
-```text
+```bacula-fd
 FileDaemon {
 
 # SERVICIO: Identidad de esta máquina. El Director debe tener un recurso 'Client'
