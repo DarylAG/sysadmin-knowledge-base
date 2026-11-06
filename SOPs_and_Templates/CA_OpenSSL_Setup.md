@@ -1,77 +1,97 @@
-# 1. Convenciones y Variables
-Para garantizar la correcta adaptabilidad de esta plantilla a cualquier entorno, se han reemplazado los valores estáticos por marcadores de posición. Antes de ejecutar los comandos, sustituya las siguientes variables por los valores reales de su infraestructura:
+# Standard Operating Procedure (SOP) - Certificate Authority (CA) with OpenSSL
 
-## Variables de Entorno y Nomenclatura
+## Overview and Laboratory Topology
 
-- **`<DIR_CA>`**: Ruta base del directorio de la CA (ej. `/home/administrator/ca` o `/root/ca`).
+This Standard Operating Procedure (SOP) outlines the deployment of an internal **Certificate Authority (CA) using OpenSSL** within a simulated multi-node network infrastructure in GNS3. The CA will provide cryptographic trust for the internal domain services, including generating a specialized unencrypted certificate bundle for transparent SSL inspection (SSL-Bump) on the Squid proxy.
 
-- **`<NOMBRE_CA>`**: Nombre del archivo base para la CA (ej. `root-ca` o `empresa-ca`).
+In this environment, all servers and client hosts are interconnected through a central switch (`Switch1`) and routed to the external network/Internet via router `R1` and a `NAT1` cloud interface:
 
-- **`<NOMBRE_NODO>`**: Nombre del servicio o servidor a certificar (ej. `web`, `mail`, `proxy`).
+* **Topology Naming Scheme & Static IPs:**
+  * `alpha-DDNS-1`: DNS & DHCP Server (`.1`)
+  * `beta-CORREO-1`: Mail Server (`.2`)
+  * `gamma-WEB&FTP-1`: Web & FTP Server (`.3`)
+  * `iota-PROXY-1`: Squid Proxy Server (`.4`)
+  * **`delta-CA-1`**: Internal Certificate Authority (CA) - *Primary target of this SOP*
+  * `pcw01-1` / `pcl01-1`: Windows and Linux Client Workstations
 
-- **`<IP_NODO>`**: Dirección IP del servidor para la extensión SAN.
+<p align="center">
+  <img src="../Assets/GNS3_LAB.png" alt="GNS3 Lab Topology" width="80%">
+</p>
 
+Since the CA server is deployed directly into this pre-addressed topology, the initial system setup focuses on establishing a secure directory structure and defining strict cryptographic policies (`openssl.cnf`) prior to generating the Root CA and issuing domain service certificates.
 
-## Variables de Identidad (Campos del Subject X.509)
+---
 
-- **`<PAIS>` (C - Country)**: Código de país de 2 letras bajo el estándar ISO 3166-1 alpha-2 (ej. `CR` para Costa Rica, `ES` para España).
+## Conventions and Environment Variables
 
-- **`<ESTADO>` (ST - State or Province)**: Nombre completo del estado, provincia o región (ej. `Alajuela`, `Madrid`).
+To ensure the adaptability of this template to any environment, static values have been replaced with placeholders. Before executing the commands, replace the following variables with the actual values for your infrastructure:
 
-- **`<LOCALIDAD>` (L - Locality)**: Nombre de la ciudad o municipio.
+**Environment and Naming Variables**
+* `<CA_DIR>`: Base path for the CA directory (e.g., `/root/ca`).
+* `<CA_NAME>`: Base filename for the CA (e.g., `delta-root-ca`).
+* `<NODE_NAME>`: Name of the service or server to be certified (e.g., `iota-proxy`).
+* `<NODE_IP>`: Server IP address for the SAN extension (e.g., `192.168.106.4`).
 
-- **`<ORGANIZACION>` (O - Organization)**: Nombre legal de la empresa o entidad operadora (ej. `empresa.com`).
+**Identity Variables (X.509 Subject Fields)**
+* `<COUNTRY>` *(C - Country)*: 2-letter country code under the ISO 3166-1 alpha-2 standard (e.g., `CR` for Costa Rica).
+* `<STATE>` *(ST - State or Province)*: Full name of the state, province, or region (e.g., `Alajuela`).
+* `<LOCALITY>` *(L - Locality)*: Name of the city or municipality.
+* `<ORGANIZATION>` *(O - Organization)*: Legal name of the company or operating entity.
+* `<DOMAIN_NAME>` *(CN - Common Name)*: The primary Fully Qualified Domain Name (FQDN) of the server or the descriptive name of the CA (e.g., `delta.xeon.cr` or `Xeon Root CA`).
 
-- **`<DOMINIO>` (CN - Common Name)**: El Fully Qualified Domain Name (FQDN) principal del servidor o el nombre descriptivo de la CA (ej. `[www.empresa.com](https://www.empresa.com)` o `Empresa Root CA`).
+---
 
+## 1. Environment Preparation and Directory Structure
 
-# 2. Preparación del Entorno y Estructura de Directorios
+Establish the secure directory structure required by OpenSSL to manage the certificate database, serial numbers, and store cryptographic keys with appropriate permissions.
 
-**Acción:** Establecer la estructura de directorios segura requerida por OpenSSL para administrar la base de datos de certificados, números de serie y almacenar las llaves criptográficas con los permisos adecuados.
-
-**Comando:**
-Cambiar el hostname del servidor CA (Opcional pero recomendado para identificación)
-```
+Change the CA server hostname (optional but recommended for identification).
+```bash
 hostnamectl set-hostname ca-server
 ```
-Crear la estructura de directorios
-```
-mkdir -p <DIR_CA>/{private,certs,newcerts,csr}
-```
-Restringir el acceso a la carpeta de llaves privadas (solo lectura/escritura para el propietario)
-```
-chmod -v 700 <DIR_CA>/private
+
+Create the directory structure.
+```bash
+mkdir -p <CA_DIR>/{private,certs,newcerts,csr}
 ```
 
-Inicializar la base de datos de certificados y el número de serie hexadecimal
-```
-touch <DIR_CA>/index
-openssl rand -hex 16 > <DIR_CA>/serial
+Restrict access to the private keys folder (read/write only for the owner).
+```bash
+chmod -v 700 <CA_DIR>/private
 ```
 
-# 3. Archivo de Configuración de la CA (`root-ca.conf`)
+Initialize the certificate database and the hexadecimal serial number file.
+```bash
+touch <CA_DIR>/index
+openssl rand -hex 16 > <CA_DIR>/serial
+```
 
-Cree el archivo `<DIR_CA>/root-ca.conf` con el siguiente contenido optimizado. Este archivo define las políticas de firma y las extensiones criptográficas necesarias para la CA y los certificados emitidos.
+## 2. CA Configuration File (`root-ca.conf`)
+
+Create the `<CA_DIR>/root-ca.conf` file with the following optimized content. This file defines the signing policies and the cryptographic extensions required for the CA and the issued certificates.
+```bash
+nano <CA_DIR>/root-ca.conf
+```
 
 ```conf
 [ ca ]
-# Define la sección por defecto para el comando 'ca'
+# Define the default section for the 'ca' command
 default_ca = CA_default
 
 [ CA_default ]
-# Rutas de la estructura de directorios
-dir           = <DIR_CA>
+# Directory structure paths
+dir           = <CA_DIR>
 certs         = $dir/certs
 new_certs_dir = $dir/newcerts
 database      = $dir/index
 serial        = $dir/serial
 RANDFILE      = $dir/private/.rand
 
-# Archivos de la CA (Llave privada y Certificado público)
-certificate   = $dir/certs/<NOMBRE_CA>.crt
-private_key   = $dir/private/<NOMBRE_CA>.key
+# CA Files (Private key and Public certificate)
+certificate   = $dir/certs/<CA_NAME>.crt
+private_key   = $dir/private/<CA_NAME>.key
 
-# Parámetros criptográficos y de emisión
+# Cryptographic and issuance parameters
 default_md    = sha256
 name_opt      = ca_default
 cert_opt      = ca_default
@@ -80,7 +100,7 @@ preserve      = no
 policy        = policy_strict
 
 [ policy_strict ]
-# Requisitos de los campos del Subject para que la CA firme el certificado
+# Subject field requirements for the CA to sign the certificate
 countryName             = supplied
 stateOrProvinceName     = supplied
 organizationName        = supplied
@@ -89,7 +109,7 @@ commonName              = supplied
 emailAddress            = optional
 
 [ req ]
-# Parámetros para la generación de solicitudes (CSR)
+# Parameters for Certificate Signing Requests (CSR) generation
 default_bits        = 2048
 distinguished_name  = req_distinguished_name
 string_mask         = utf8only
@@ -97,7 +117,7 @@ default_md          = sha256
 x509_extensions     = v3_ca
 
 [ req_distinguished_name ]
-# Plantilla interactiva de campos (Ignorada si se usa prompt=no en el CSR)
+# Interactive field template (Ignored if prompt=no is used in the CSR)
 countryName         = Country Name (2 letter code)
 stateOrProvinceName = State or Province Name
 localityName        = Locality Name
@@ -105,71 +125,64 @@ organizationName    = Organization Name
 commonName          = Common Name
 
 [ v3_ca ]
-# Extensiones obligatorias para un certificado de Autoridad Certificadora
+# Mandatory extensions for a Certificate Authority certificate
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid:always,issuer
 basicConstraints       = critical, CA:TRUE
 keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
 
 [ server_cert ]
-# Extensiones estándar para certificados de servidor final
+# Standard extensions for end-entity server certificates
 basicConstraints       = CA:FALSE
 nsCertType             = server
-nsComment              = "Certificado Digital para Servidor Interno"
+nsComment              = "Digital Certificate for Internal Server"
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid,issuer:always
 keyUsage               = critical, digitalSignature, keyEncipherment
 extendedKeyUsage       = serverAuth
 ```
-## 4. Generación de la Llave y Certificado Root CA
+## 3. Root CA Key and Certificate Generation
 
-**Acción:** Generar la llave privada de la CA utilizando cifrado AES-256 y un tamaño de 4096 bits para máxima seguridad. Luego, restringir los permisos del archivo.
-
-**Comando:**
-```
-cd <DIR_CA>
-openssl genrsa -aes256 -out <DIR_CA>/private/<NOMBRE_CA>.key 4096
-chmod 400 <DIR_CA>/private/<NOMBRE_CA>.key
+Generate the CA private key using AES-256 encryption and a 4096-bit size for maximum security. Then, restrict the file permissions.
+```bash
+cd <CA_DIR>
+openssl genrsa -aes256 -out <CA_DIR>/private/<CA_NAME>.key 4096
+chmod 400 <CA_DIR>/private/<CA_NAME>.key
 ```
 
-**Acción:** Generar el certificado raíz autofirmado (Root CA) utilizando la configuración definida. Se establece una validez extensa (ej. 3650 días / 10 años) y se aplica la extensión `v3_ca` para habilitar sus funciones como entidad certificadora.
-
-**Comando:**
-```
-openssl req -config <DIR_CA>/root-ca.conf \
-  -key <DIR_CA>/private/<NOMBRE_CA>.key \
+Generate the self-signed root certificate (Root CA) using the defined configuration. An extended validity is set (e.g., 3650 days / 10 years), and the `v3_ca` extension is applied to enable its functions as a certificate authority.
+```bash
+openssl req -config <CA_DIR>/root-ca.conf \
+  -key <CA_DIR>/private/<CA_NAME>.key \
   -new -x509 -days 3650 -sha256 -extensions v3_ca \
-  -out <DIR_CA>/certs/<NOMBRE_CA>.crt
+  -out <CA_DIR>/certs/<CA_NAME>.crt
 ```
 
-## 5. REQUISITO CRÍTICO: Certificado PEM sin contraseña para Squid Proxy (SSL-Bump)
+> **CRITICAL REQUIREMENT NOTE: Unencrypted PEM Certificate for Squid Proxy (SSL-Bump)**
+> 
+> For SSL/TLS inspection (SSL Bumping) on a transparent Squid Proxy, the service requires an unencrypted CA private key to dynamically sign certificates in memory. Furthermore, Squid typically requires the private key and certificate combined into a single `.pem` file.
+> 
+> Extract an unencrypted copy of the CA private key (you will be prompted for the original key's passphrase):
+> ```bash
+> openssl rsa -in <CA_DIR>/private/<CA_NAME>.key -out <CA_DIR>/private/<CA_NAME>-nopass.key
+> 
+> # Strictly protect the unencrypted key
+> chmod 400 <CA_DIR>/private/<CA_NAME>-nopass.key
+> ```
+> 
+> Concatenate the unencrypted private key and the public CA certificate into a unified `.pem` file:
+> ```bash
+> cat <CA_DIR>/private/<CA_NAME>-nopass.key <CA_DIR>/certs/<CA_NAME>.crt > <CA_DIR>/certs/<CA_NAME>-squid-bundle.pem
+> 
+> chmod 400 <CA_DIR>/certs/<CA_NAME>-squid-bundle.pem
+> ```
+## 4. Server Certificate Generation (Nodes)
 
-Para inspección SSL/TLS (SSL Bumping) en Squid Proxy transparente, el servicio requiere que la llave privada de la CA no esté cifrada con contraseña (unencrypted) para poder firmar certificados en memoria dinámicamente. Además, Squid comúnmente requiere la llave privada y el certificado combinados en un único archivo `.pem`.
+This process must be repeated for each service (Web, Mail, Proxy, etc.) by adapting the variables.
 
-**Acción 1:** Extraer una copia sin contraseña (descifrada) de la llave privada de la CA. Se le solicitará la frase de paso de la llave original.
+### 4.1. Node CSR Configuration File (`<NODE_NAME>-csr.conf`)
 
-**Comando:**
-```
-openssl rsa -in <DIR_CA>/private/<NOMBRE_CA>.key -out <DIR_CA>/private/<NOMBRE_CA>-sinpass.key
-# Proteger la llave sin contraseña rigurosamente
-chmod 400 <DIR_CA>/private/<NOMBRE_CA>-sinpass.key
-```
-
-**Acción 2:** Concatenar la llave privada descifrada y el certificado público de la CA en un archivo `.pem` unificado.
-
-**Comando:**
-```
-cat <DIR_CA>/private/<NOMBRE_CA>-sinpass.key <DIR_CA>/certs/<NOMBRE_CA>.crt > <DIR_CA>/certs/<NOMBRE_CA>-squid-bundle.pem
-chmod 400 <DIR_CA>/certs/<NOMBRE_CA>-squid-bundle.pem
-```
-
-## 6. Generación de Certificados de Servidor (Nodos)
-
-Este proceso debe repetirse para cada servicio (Web, Correo, Proxy, etc.) adaptando las variables.
-
-### 6.1. Archivo de Configuración CSR del Nodo (`<NOMBRE_NODO>-csr.conf`)
-
-Cree un archivo específico para el nodo en `<DIR_CA>/csr/<NOMBRE_NODO>-csr.conf`. Este enfoque inyecta el _Subject Alternative Name (SAN)_ directamente en la petición, lo cual es un requisito estricto de los navegadores modernos.
+Create a specific configuration file for the node in `<CA_DIR>/csr/<NODE_NAME>-csr.conf`. This approach injects the Subject Alternative Name (SAN) extension directly into the request, which is a strict requirement for modern browsers.
 
 ```conf
 [ req ]
@@ -180,98 +193,90 @@ req_extensions     = req_ext
 prompt             = no
 
 [ req_distinguished_name ]
-# Reemplazar con variables reales
-countryName            = <PAIS>
-stateOrProvinceName    = <ESTADO>
-localityName           = <LOCALIDAD>
-organizationName       = <ORGANIZACION>
-commonName             = <DOMINIO>
+# Replace with actual variables
+countryName            = <COUNTRY>
+stateOrProvinceName    = <STATE>
+localityName           = <LOCALITY>
+organizationName       = <ORGANIZATION>
+commonName             = <DOMAIN_NAME>
 
 [ req_ext ]
 subjectAltName = @alt_names
 
 [ alt_names ]
-# Nombres alternativos (FQDN, hostnames cortos y Direcciones IP)
-DNS.1 = <DOMINIO>
-DNS.2 = www.<DOMINIO>
-DNS.3 = <NOMBRE_NODO>
-IP.1  = <IP_NODO>
-
+# Subject Alternative Names (FQDNs, short hostnames, and IP addresses)
+DNS.1 = <DOMAIN_NAME>
+DNS.2 = www.<DOMAIN_NAME>
+DNS.3 = <NODE_NAME>
+IP.1  = <NODE_IP>
 ```
-### 6.2. Creación y Firma del Certificado del Nodo
+### 4.2. Node Certificate Creation and Signing
 
-**Acción:** Generar la llave privada (2048 bits) para el servidor final.
-
-**Comando:**
-```
-openssl genrsa -out <DIR_CA>/private/<NOMBRE_NODO>.key 2048
+Generate the 2048-bit private key for the target server.
+```bash
+openssl genrsa -out <CA_DIR>/private/<NODE_NAME>.key 2048
 ```
 
-**Acción:** Generar la Solicitud de Firma de Certificado (CSR) utilizando el archivo de configuración personalizado que incluye las extensiones SAN.
-
-**Comando:**
-```
-openssl req -new -key <DIR_CA>/private/<NOMBRE_NODO>.key -sha256 \
-  -out <DIR_CA>/csr/<NOMBRE_NODO>.csr \
-  -config <DIR_CA>/csr/<NOMBRE_NODO>-csr.conf
+Generate the Certificate Signing Request (CSR) using the customized configuration file that contains the SAN extensions.
+```bash
+openssl req -new -key <CA_DIR>/private/<NODE_NAME>.key -sha256 \
+  -out <CA_DIR>/csr/<NODE_NAME>.csr \
+  -config <CA_DIR>/csr/<NODE_NAME>-csr.conf
 ```
 
-**Acción:** Firmar el certificado del nodo utilizando la Root CA. Se fuerza la inclusión de las extensiones SAN (`req_ext`) pasándolas directamente desde el archivo `.conf` del nodo mediante `-extfile`.
-
-**Comando:**
-```
-openssl ca -config <DIR_CA>/root-ca.conf -notext \
-  -in <DIR_CA>/csr/<NOMBRE_NODO>.csr \
-  -out <DIR_CA>/certs/<NOMBRE_NODO>.crt \
+Sign the node certificate using the Root CA. The SAN extensions (`req_ext`) are explicitly included by passing them directly from the node's `.conf` file via `-extfile`.
+```bash
+openssl ca -config <CA_DIR>/root-ca.conf -notext \
+  -in <CA_DIR>/csr/<NODE_NAME>.csr \
+  -out <CA_DIR>/certs/<NODE_NAME>.crt \
   -extensions req_ext \
-  -extfile <DIR_CA>/csr/<NOMBRE_NODO>-csr.conf -batch
+  -extfile <CA_DIR>/csr/<NODE_NAME>-csr.conf -batch
 ```
 
-## 7. Verificación y Troubleshooting
+## 5. Verification, Management, and Troubleshooting
 
-### Comandos de Verificación
+### Verification Commands
 
-Para auditar la correcta generación de los elementos criptográficos, utilice los siguientes comandos de inspección en texto plano:
+To audit the correct generation of cryptographic elements, use the following inspection commands:
 
-- Verificar un Certificado Público (.crt / .pem):
-```
-openssl x509 -text -noout -in <DIR_CA>/certs/<NOMBRE_NODO>.crt
-```
-
-- Verificar una Solicitud de Firma (CSR):
-```
-openssl req -text -noout -verify -in <DIR_CA>/csr/<NOMBRE_NODO>.csr
+Inspect a Public Certificate (`.crt` / `.pem`):
+```bash
+openssl x509 -text -noout -in <CA_DIR>/certs/<NODE_NAME>.crt
 ```
 
-- Verificar Extensiones SAN Específicas:
-```
-openssl x509 -text -noout -in <DIR_CA>/certs/<NOMBRE_NODO>.crt | grep -A 2 "Subject Alternative Name"
-```
-
-- Comprobar Integridad (Módulo Matemático):
-```
-openssl rsa -noout -modulus -in <DIR_CA>/private/<NOMBRE_NODO>.key | openssl md5 openssl x509 -noout -modulus -in <DIR_CA>/certs/<NOMBRE_NODO>.crt | openssl md5
+Inspect a Certificate Signing Request (CSR):
+```bash
+openssl req -text -noout -verify -in <CA_DIR>/csr/<NODE_NAME>.csr
 ```
 
-### Troubleshooting Común
+Verify Specific Subject Alternative Name (SAN) Extensions:
+```bash
+openssl x509 -text -noout -in <CA_DIR>/certs/<NODE_NAME>.crt | grep -A 2 "Subject Alternative Name"
+```
 
-- **Navegador arroja "ERR_CERT_COMMON_NAME_INVALID":** Chrome y navegadores modernos ignoran el campo _Common Name (CN)_. Si aparece este error, el certificado se firmó sin la extensión _Subject Alternative Name (SAN)_. Verifique el paso 6.2 y asegúrese de incluir el flag `-extfile`.
+Verify Key and Certificate Mathematical Integrity (Matching Modulus Hash):
+```bash
+openssl rsa -noout -modulus -in <CA_DIR>/private/<NODE_NAME>.key | openssl md5
+openssl x509 -noout -modulus -in <CA_DIR>/certs/<NODE_NAME>.crt | openssl md5
+```
+
+### Common Troubleshooting
+
+- **Browser Error `ERR_CERT_COMMON_NAME_INVALID`:** Chrome and modern browsers ignore the _Common Name (CN)_ field. If this error appears, the certificate was signed without the _Subject Alternative Name (SAN)_ extension. Verify Step 4.2 and ensure the `-extfile` flag is included during signing.
+
+- **Browser Error `ERR_CERT_AUTHORITY_INVALID`:** The server certificate was successfully validated, but the client system or browser does not trust the issuer. Install `ca.crt` into the client's "Trusted Root Certification Authorities" store.
+
+- **OpenSSL Error `TXT_DB error number 2`:** Indicates an attempt to sign a certificate with a _Subject_ identical to a previously signed entry. Revoke the old entry or modify `unique_subject = no` in the `index.attr` configuration.
 
 
-- **Navegador arroja "ERR_CERT_AUTHORITY_INVALID":** El certificado público del servidor fue verificado exitosamente, pero el sistema operativo o navegador cliente no confía en quien lo emitió. Debe instalar `ca.crt` en el almacén de "Trusted Root Certification Authorities" del cliente.
+## 6. Advanced Features and Next Steps
 
- 
-- **Error de OpenSSL "TXT_DB error number 2":** Significa que está intentando firmar un certificado con un _Subject_ idéntico a uno previamente firmado. Debe revocar el anterior o cambiar el requerimiento `unique_subject = no` en el archivo `index.attr`.
+To elevate this Root CA deployment to an enterprise-grade model, consider implementing the following enhancements:
 
+- **Intermediate CAs:** Follow security best practices by keeping the Root CA offline. Generate an Intermediate CA signed by the Root CA to handle day-to-day certificate issuance.
 
-## 8. Funciones Avanzadas y Próximos Pasos
+- **Certificate Revocation Lists (CRL):** Configure and publish periodic `.crl` files to notify clients of revoked or compromised certificates before expiration.
 
-Para evolucionar esta CA a un modelo Enterprise estándar, se recomienda implementar las siguientes fases:
+- **Online Certificate Status Protocol (OCSP):** Deploy an OCSP responder to provide real-time certificate validation, reducing client overhead compared to CRL downloads.
 
-1. **Autoridades Intermedias (Intermediate CAs):** La mejor práctica de seguridad dicta mantener la Root CA apagada/offline. Se debe generar una Intermediate CA firmada por la Root, y utilizar la Intermedia para emitir los certificados del día a día.
-
-2. **Listas de Revocación de Certificados (CRL):** Configurar y habilitar la generación periódica de archivos `.crl` para informar a los clientes de certificados comprometidos antes de su fecha de expiración.
-
-3. **Online Certificate Status Protocol (OCSP):** Implementar un responder OCSP para validaciones de revocación en tiempo real, lo cual es más eficiente en redes grandes que la descarga de archivos CRL pesados.
-
-4. **Automatización de Despliegue:** Empaquetar el certificado raíz público mediante GPOs de Active Directory o herramientas como Ansible para distribuirlo en el _Trust Store_ de todos los endpoints corporativos.
+- **Automated Distribution:** Package and deploy the public Root CA certificate using Active Directory Group Policies (GPO) or Ansible to automatically populate corporate client trust stores.
