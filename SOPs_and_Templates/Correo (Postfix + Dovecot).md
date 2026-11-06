@@ -1,106 +1,151 @@
-# 1. Convenciones y Variables
+# Standard Operating Procedure (SOP) - Mail Server (Postfix & Dovecot)
 
-Antes de iniciar el despliegue, asegúrate de reemplazar los siguientes marcadores de posición en los comandos y archivos de configuración con los valores reales de tu entorno:
+## Overview and Laboratory Topology
 
-- `<DOMINIO_PRINCIPAL>`: El nombre de dominio principal para el correo (ej. `dominio.com`).
+This Standard Operating Procedure (SOP) outlines the deployment of an enterprise-grade **Mail Transfer Agent (MTA) and Mail Delivery Agent (MDA)** using **Postfix** and **Dovecot** within a simulated multi-node network infrastructure in GNS3. The mail server provides secure internal communication (SMTP Submission over TLS, IMAPS/POP3S) utilizing certificates issued by the internal Root CA.
 
-- `<HOSTNAME_CORREO>`: El nombre corto del servidor (ej. `mail` o `beta`).
+In this environment, all servers and client hosts are interconnected through a central switch (`Switch1`) and routed to the external network/Internet via router `R1` and a `NAT1` cloud interface:
 
-- `<FQDN_CORREO>`: El nombre de dominio completamente calificado del servidor (ej. `mail.dominio.com`).
+- **Topology Naming Scheme & Static IPs:**
+    
+    - `alpha-DDNS-1`: DNS & DHCP Server (`.1`)
+    
+    - **`beta-CORREO-1`**: Mail Server (Postfix/Dovecot) (`.2`) - _Primary target of this SOP_
+    
+    - `gamma-WEB&FTP-1`: Web & FTP Server (`.3`)
+    
+    - `iota-PROXY-1`: Squid Proxy Server (`.4`)
+    
+    - `delta-CA-1`: Internal Certificate Authority (CA) (`.5`)
+    
+    - `pcw01-1` / `pcl01-1`: Windows and Linux Client Workstations
+    
 
-- `<IP_SERVIDOR>`: Dirección IP estática asignada a este servidor (ej. `192.168.100.2`).
+<p align="center">
+  <img src="../Assets/GNS3_LAB" alt="GNS3 Lab Topology" width="80%">
+</p>
 
-- `<IP_GATEWAY>`: Dirección IP de la puerta de enlace de la red (ej. `192.168.100.254`).
+Since the mail server is deployed directly into this pre-addressed topology, initial network resolution and static IP configuration are verified prior to installing mail suites and enforcing TLS authentication.
 
-- `<IP_DNS>`: Servidor de resolución de nombres (ej. `192.168.100.1`).
+---
 
-- `<RED_LOCAL>`: El segmento de red permitido para el retransmisor (relay) local (ej. `192.168.100.0/24`).
+## Conventions and Environment Variables
 
-- `<USUARIO_CORREO>`: Nombre del usuario del sistema que tendrá un buzón de correo (ej. `juanperez`).
+To ensure the adaptability of this template to any environment, static values have been replaced with placeholders. Before executing the commands, replace the following variables with the actual values for your infrastructure:
 
-- `<CA_USER>@<CA_HOST>`: Usuario y servidor donde reside la Autoridad Certificadora para copiar los certificados.
+**Environment and Naming Variables**
 
+- `<DOMAIN_NAME>`: Primary email domain name (e.g., `xeon.cr`).
 
-# 2. Preparación del Sistema y Red
+- `<MAIL_HOSTNAME>`: Short hostname of the mail server (e.g., `beta`).
 
-**Acción:** Configurar el nombre de host corto del servidor.
+- `<MAIL_FQDN>`: Fully Qualified Domain Name of the mail server (e.g., `beta.xeon.cr`).
 
-Bash
+- `<SERVER_IP>`: Static IP address assigned to this server (e.g., `192.168.106.2`).
 
+- `<GATEWAY_IP>`: Default gateway IP address (e.g., `192.168.106.254`).
+
+- `<DNS_IP>`: Internal DNS resolver IP address (e.g., `192.168.106.1`).
+
+- `<LOCAL_NET>`: Subnet allowed for local mail relaying (e.g., `192.168.106.0/24`).
+
+- `<MAIL_USER>`: System user account created for mailbox access (e.g., `jdoe`).
+
+- `<CA_USER>@<CA_HOST>`: SSH user and IP of the Certificate Authority host (e.g., `root@192.168.106.5`).
+
+---
+
+## 1. System and Network Preparation
+
+Set the short hostname for the mail server.
+```bash
+hostnamectl set-hostname <MAIL_HOSTNAME>
 ```
-hostnamectl set-hostname <HOSTNAME_CORREO>
-```
 
-**Acción:** Ajustar la resolución local para incluir el FQDN apuntando a la interfaz de loopback.
-```
+Configure local host resolution to map the loopback interface to the server's FQDN and short hostname.
+```bash
 nano /etc/hosts
-	127.0.0.1       localhost
-	127.0.1.1       <FQDN_CORREO>    <HOSTNAME_CORREO>
 ```
 
-**Acción:** Configurar los servidores DNS locales.
-```
-nano /etc/resolv.conf 
-	search <DOMINIO_PRINCIPAL> 
-	nameserver <IP_DNS> 
+```conf
+127.0.0.1       localhost
+127.0.1.1       <MAIL_FQDN>    <MAIL_HOSTNAME>
 ```
 
-**Acción:** Asignar la dirección IP estática en la interfaz de red primaria. _(Nota: Ajusta `enp0s3` según el nombre real de tu interfaz)._
+Configure the system DNS resolver pointing to the internal DNS server.
+```bash
+nano /etc/resolv.conf
 ```
+
+```conf
+search <DOMAIN_NAME>
+nameserver <DNS_IP>
+```
+
+Assign the static IP parameters on the primary network interface (adjust `enp0s3` according to your interface name).
+```bash
 nano /etc/network/interfaces
-	# The primary network interface
-	allow-hotplug enp0s3
-	iface enp0s3 inet static
-	    address <IP_SERVIDOR>
-	    netmask 255.255.255.0
-	    gateway <IP_GATEWAY>
 ```
 
-**Acción:** Actualizar los repositorios y paquetes del sistema.
+```conf
+# The primary network interface
+allow-hotplug enp0s3
+iface enp0s3 inet static
+    address <SERVER_IP>
+    netmask 255.255.255.0
+    gateway <GATEWAY_IP>
 ```
+
+Update system package index and upgrade installed packages.
+```bash
 apt update && apt upgrade -y
 ```
 
-# 3. Gestión de Certificados SSL/TLS
+---
 
-**Acción:** Importar los certificados TLS/SSL generados desde el servidor CA y asignar los permisos restrictivos necesarios.
+## 2. SSL/TLS Certificate Deployment
 
-Copiar certificados desde el servidor CA
-```
-scp <CA_USER>@<CA_HOST>:/ruta/ca/certs/<HOSTNAME_CORREO>.crt /etc/ssl/certs/<HOSTNAME_CORREO>.crt
-scp <CA_USER>@<CA_HOST>:/ruta/ca/private/<HOSTNAME_CORREO>.key /etc/ssl/private/<HOSTNAME_CORREO>.key
-scp <CA_USER>@<CA_HOST>:/ruta/ca/certs/ca-root.crt /etc/ssl/certs/ca-root.crt
-```
-
-Asegurar la llave privada
-```
-chmod 600 /etc/ssl/private/<HOSTNAME_CORREO>.key
-chown root:root /etc/ssl/private/<HOSTNAME_CORREO>.key
+Securely copy the public certificate, private key, and Root CA certificate issued by `CA-Authority`.
+```bash
+scp <CA_USER>@<CA_HOST>:/root/ca/certs/<MAIL_HOSTNAME>.crt /etc/ssl/certs/<MAIL_HOSTNAME>.crt
+scp <CA_USER>@<CA_HOST>:/root/ca/private/<MAIL_HOSTNAME>.key /etc/ssl/private/<MAIL_HOSTNAME>.key
+scp <CA_USER>@<CA_HOST>:/root/ca/certs/ca-root.crt /etc/ssl/certs/ca-root.crt
 ```
 
-# 4. Instalación y Configuración de Postfix (MTA)
+Enforce strict access permissions on the private key file.
+```bash
+chmod 600 /etc/ssl/private/<MAIL_HOSTNAME>.key
+chown root:root /etc/ssl/private/<MAIL_HOSTNAME>.key
+```
 
-**Acción:** Instalar el agente de transferencia de correo y herramientas básicas.
+## 3. Postfix (MTA) Installation and Configuration
+
+Install the Postfix Mail Transfer Agent and mail utility binaries.
 ```
 apt update && apt install -y postfix mailutils
 ```
 
-**Acción:** Respaldar y optimizar la configuración principal (`main.cf`).
-```conf
-# Nivel de compatibilidad y dominios
-compatibility_level = 3.9
-mydomain = <DOMINIO_PRINCIPAL>
-myorigin = $mydomain
-myhostname = <FQDN_CORREO>
-mydestination = $myhostname, <DOMINIO_PRINCIPAL>, localhost.$mydomain, localhost
+Backup and configure the main Postfix configuration file (`/etc/postfix/main.cf`).
+```bash 
+cp /etc/postfix/main.cf /etc/postfix/main.cf.bak
+nano /etc/postfix/main.cf
+```
 
-# Red e Interfaces
+```conf
+# Compatibility level and domain definitions
+compatibility_level = 3.9
+mydomain = <DOMAIN_NAME>
+myorigin = $mydomain
+myhostname = <MAIL_FQDN>
+mydestination = $myhostname, <DOMAIN_NAME>, localhost.$mydomain, localhost
+
+# Network and Interfaces
 inet_protocols = ipv4
 inet_interfaces = all
 mynetworks_style = host
-mynetworks = 127.0.0.0/8 <RED_LOCAL>
+mynetworks = 127.0.0.0/8 <LOCAL_NET>
 
-# Buzones de correo (Maildir)
+# Mailbox management (Maildir format)
 mailbox_size_limit = 0
 home_mailbox = Maildir/
 mailbox_command = 
@@ -108,9 +153,9 @@ recipient_delimiter = +
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 
-# Configuración TLS
-smtpd_tls_key_file = /etc/ssl/private/<HOSTNAME_CORREO>.key
-smtpd_tls_cert_file = /etc/ssl/certs/<HOSTNAME_CORREO>.crt
+# TLS Security Parameters
+smtpd_tls_key_file = /etc/ssl/private/<MAIL_HOSTNAME>.key
+smtpd_tls_cert_file = /etc/ssl/certs/<MAIL_HOSTNAME>.crt
 smtp_tls_CAfile = /etc/ssl/certs/ca-root.crt
 smtpd_tls_security_level = may
 smtp_tls_security_level = may
@@ -118,20 +163,20 @@ smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
 smtpd_tls_auth_only = yes
 smtpd_tls_loglevel = 1
 
-# Autenticación SASL integrada con Dovecot
+# SASL Authentication via Dovecot
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
 smtpd_sasl_security_options = noanonymous
 smtpd_sasl_local_domain = $myhostname
 
-# Restricciones de envío
+# Recipient and Relay Restrictions
 smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
 smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
 ```
 
-**Acción:** Respaldar y configurar el proceso maestro (`master.cf`) para habilitar el puerto de envío seguro SMTP Submission (587).
-```
+Backup and configure the Postfix master process file (`/etc/postfix/master.cf`) to enable secure SMTP Submission (Port 587).
+```bash
 cp /etc/postfix/master.cf /etc/postfix/master.cf.bak
 nano /etc/postfix/master.cf
 ```
@@ -176,32 +221,34 @@ postlog   unix-dgram n  -       n       -       1       postlogd
 
 ```
 
-# 5. Instalación y Configuración de Dovecot (IMAP/POP3)
+---
 
-**Acción:** Instalar los servicios de Dovecot.
-```
+## 4. Dovecot (IMAP/POP3) Installation and Configuration
+
+Install Dovecot IMAP and POP3 service packages.
+```bash
 apt install -y dovecot-imapd dovecot-pop3d
 ```
 
-**Acción:** Respaldar y configurar los parámetros SSL (`10-ssl.conf`) para forzar conexiones seguras.
-```
+Configure SSL parameters (`/etc/dovecot/conf.d/10-ssl.conf`) to enforce TLS encryption.
+```bash
 cp /etc/dovecot/conf.d/10-ssl.conf /etc/dovecot/conf.d/10-ssl.conf.bak
 nano /etc/dovecot/conf.d/10-ssl.conf
 ```
 
 ```conf
-# Requerir SSL y definir rutas de certificados
+# Enforce SSL/TLS and specify certificate paths
 ssl = required
-ssl_server_cert_file = /etc/ssl/certs/<HOSTNAME_CORREO>.crt
-ssl_server_key_file = /etc/ssl/private/<HOSTNAME_CORREO>.key
+ssl_server_cert_file = /etc/ssl/certs/<MAIL_HOSTNAME>.crt
+ssl_server_key_file = /etc/ssl/private/<MAIL_HOSTNAME>.key
 ssl_server_ca_file = /etc/ssl/certs/ca-root.crt
 
-# Protocolo mínimo aceptado
+# Minimum TLS protocol version
 ssl_min_protocol = TLSv1.2
 ```
 
-**Acción:** Respaldar y configurar los mecanismos de autenticación (`10-auth.conf`).
-```
+Configure system authentication mechanisms (`/etc/dovecot/conf.d/10-auth.conf`).
+```bash
 cp /etc/dovecot/conf.d/10-auth.conf /etc/dovecot/conf.d/10-auth.conf.bak
 nano /etc/dovecot/conf.d/10-auth.conf
 ```
@@ -211,8 +258,8 @@ nano /etc/dovecot/conf.d/10-auth.conf
 
 ```
 
-**Acción:** Respaldar y configurar los sockets de autenticación para Postfix (`10-master.conf`).
-```
+Configure Dovecot service sockets (`/etc/dovecot/conf.d/10-master.conf`) to handle authentication requests for Postfix.
+```bash
 cp /etc/dovecot/conf.d/10-master.conf /etc/dovecot/conf.d/10-master.conf.bak
 nano /etc/dovecot/conf.d/10-master.conf
 ```
@@ -220,48 +267,22 @@ nano /etc/dovecot/conf.d/10-master.conf
 ```conf
 service imap-login {
   inet_listener imap {
-
+    port = 143
   }
   inet_listener imaps {
-
+    port = 993
+    ssl = yes
   }
 }
 
 service pop3-login {
   inet_listener pop3 {
-
+    port = 110
   }
   inet_listener pop3s {
-
-
+    port = 995
+    ssl = yes
   }
-}
-
-service submission-login {
-  inet_listener submission {
-
-  }
-  inet_listener submissions {
-
-  }
-}
-
-service lmtp {
-  unix_listener lmtp {
-
-  }
-
-}
-
-service imap {
-}
-
-service pop3 {
-
-}
-
-service submission {
-
 }
 
 service auth {
@@ -271,96 +292,105 @@ service auth {
     group = postfix
   }
 
+  # Postfix SASL authentication socket
   unix_listener /var/spool/postfix/private/auth {
     mode = 0666
     user = postfix
-    group = postfix  
-}
-
-}
-
-service auth-worker {
-
-}
-
-service dict {
-  unix_listener dict {
-
+    group = postfix
   }
 }
 
+service auth-worker {
+  user = root
+}
+
 ```
 
-## 6. Creación de Usuarios y Estructura Maildir
+---
 
-**Acción:** Crear usuarios del sistema sin acceso a shell y preparar su estructura de buzón Maildir.
-Crear usuario
-```
-useradd -m -s /sbin/nologin -c "Usuario de Correo" <USUARIO_CORREO>
-passwd <USUARIO_CORREO>
-```
-Crear estructura Maildir y asignar permisos
-```
-mkdir -p /home/<USUARIO_CORREO>/Maildir/{new,cur,tmp}
-chown -R <USUARIO_CORREO>:<USUARIO_CORREO> /home/<USUARIO_CORREO>/Maildir/
-chmod -R 700 /home/<USUARIO_CORREO>/Maildir/
+## 5. User Creation and Maildir Provisioning
+
+Create system users without shell access (`nologin`) to serve as dedicated email accounts.
+```bash
+useradd -m -s /sbin/nologin -c "Mail User Account" <MAIL_USER>
+passwd <MAIL_USER>
 ```
 
-## 7. Gestión, Verificación y Troubleshooting
+Initialize the `Maildir` directory tree (`new`, `cur`, `tmp`) with strict owner-only permissions.
+```bash
+mkdir -p /home/<MAIL_USER>/Maildir/{new,cur,tmp}
+chown -R <MAIL_USER>:<MAIL_USER> /home/<MAIL_USER>/Maildir/
+chmod -R 700 /home/<MAIL_USER>/Maildir/
+```
 
-**Control de Servicios:**
+---
+
+## 6. Verification, Management, and Troubleshooting
+
+### Service Management
+
+Restart and enable Postfix and Dovecot services at boot.
 ```
 systemctl restart postfix dovecot
 systemctl enable postfix dovecot
 systemctl status postfix dovecot
 ```
 
-**Verificación de Configuración Activa:** Para validar que no hay errores de sintaxis y ver los parámetros cargados en memoria:
-Verificar Postfix
-```
+### Active Configuration Audit
+
+Verify active parameters loaded into memory without syntax errors:
+```bash
+# Postfix active configuration audit
 postconf -n
-```
-Verificar Dovecot
-```
+
+# Dovecot active configuration audit
 doveconf -n
 ```
 
-**Prueba de Conexión TLS/SSL:** Comprueba que el certificado se esté entregando correctamente en el puerto IMAPS (993).
-```
-openssl s_client -connect <FQDN_CORREO>:993 -CAfile /etc/ssl/certs/ca-root.crt
-```
+### TLS/SSL Connectivity Test
 
-**Diagnóstico de Correo (Troubleshooting):**
-
-- **Ver la cola de correos:** `mailq` o `postqueue -p`
-
-- **Forzar el envío de la cola:** `postqueue -f`
-
-- **Borrar todos los correos encolados:** `postsuper -d ALL`
-
-- **Monitoreo en tiempo real de transacciones (Logs):**
-```
-tail -f /var/log/mail.log
+Verify certificate delivery over encrypted IMAPS (Port 993).
+```bash
+openssl s_client -connect <MAIL_FQDN>:993 -CAfile /etc/ssl/certs/ca-root.crt
 ```
 
-Alternativa moderna si el sistema usa systemd-journald:
+### Queue Management and Diagnostics
+
+Check current mail queue status:
+```bash
+postqueue -p
 ```
+
+Force immediate queue delivery:
+```bash
+postqueue -f
+```
+
+Flush all messages from the mail queue:
+```bash
+postsuper -d ALL
+```
+
+Monitor live mail service transactions:
+```bash
 journalctl -u postfix -u dovecot -f
 ```
 
-- **Fallo de Autenticación (SASL):** Si los clientes no pueden enviar correo (Error 535), verifica que el socket en `/var/spool/postfix/private/auth` se creó correctamente y tiene los permisos adecuados definidos en `10-master.conf`.
+### Common Troubleshooting
 
-- **Rechazo de Relay (Relay Access Denied):** Verifica que la IP pública o local del cliente esté contemplada en la directiva `mynetworks` dentro de `main.cf`, o que el cliente esté enviando correo autenticado correctamente por el puerto 587.
+- **SASL Authentication Failure (Error 535):** Verify that the unix socket `/var/spool/postfix/private/auth` exists with `0666` permissions and `postfix:postfix` ownership as configured in `10-master.conf`.
+
+- **Relay Access Denied:** Ensure the client IP range is listed under `mynetworks` in `main.cf`, or verify that the mail client submits credentials via encrypted Port 587.
 
 
-## 8. Funciones Avanzadas y Próximos Pasos
+## 7. Advanced Features and Next Steps
 
-Una vez validada la funcionalidad base, se recomienda implementar las siguientes mejoras para asegurar un entorno de producción óptimo:
+To upgrade this mail infrastructure to an enterprise-grade production environment:
 
-- **Registros DNS de Seguridad:** Implementación de **SPF** (Sender Policy Framework), **DKIM** (DomainKeys Identified Mail) y **DMARC** (Domain-based Message Authentication, Reporting, and Conformance) para evitar que los correos sean marcados como SPAM.
+- **Email Authentication Standards:** Implement **SPF** (Sender Policy Framework), **DKIM** (DomainKeys Identified Mail), and **DMARC** records to prevent domain spoofing and spam classification.
 
-- **Integración Webmail:** Despliegue de un cliente web como **Roundcube** acoplado a un servidor web (Nginx/Apache) y PHP-FPM.
+- **Webmail Interface Integration:** Deploy **Roundcube** or **RainLoop** hosted on NGINX/Apache with PHP-FPM.
 
-- **Usuarios Virtuales (Base de Datos):** Migración de cuentas de sistema (`/etc/passwd`) a usuarios virtuales gestionados mediante MariaDB/MySQL o PostgreSQL, permitiendo hospedar múltiples dominios virtuales (Virtual Domains).
+- **Virtual Users and Domains:** Migrate from system accounts (`/etc/passwd`) to virtual accounts backed by MariaDB/PostgreSQL or LDAP.
 
-- **Antispam y Antivirus:** Integración de **SpamAssassin** y **ClamAV** a través de Amavis o Rspamd.
+- **Antispam and Antivirus Filtering:** Integrate **Rspamd** or **Amavisd-new** with **ClamAV** and **SpamAssassin**.
