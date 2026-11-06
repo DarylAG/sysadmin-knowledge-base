@@ -15,7 +15,7 @@ In this environment, all servers and client hosts are interconnected through a c
   * `pcw01-1` / `pcl01-1`: Windows and Linux Client Workstations
 
 <p align="center">
-  <img src="../Assets/GNS3_LAB.png" alt="GNS3 Lab Topology" width="80%">
+  <img src="../Assets/GNS3_LAB" alt="GNS3 Lab Topology" width="80%">
 </p>
 
 Since the CA server is deployed directly into this pre-addressed topology, the initial system setup focuses on establishing a secure directory structure and defining strict cryptographic policies (`openssl.cnf`) prior to generating the Root CA and issuing domain service certificates.
