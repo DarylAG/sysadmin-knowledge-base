@@ -66,6 +66,8 @@ touch <CA_DIR>/index
 openssl rand -hex 16 > <CA_DIR>/serial
 ```
 
+---
+
 ## 2. CA Configuration File (`root-ca.conf`)
 
 Create the `<CA_DIR>/root-ca.conf` file with the following optimized content. This file defines the signing policies and the cryptographic extensions required for the CA and the issued certificates.
@@ -141,6 +143,9 @@ authorityKeyIdentifier = keyid,issuer:always
 keyUsage               = critical, digitalSignature, keyEncipherment
 extendedKeyUsage       = serverAuth
 ```
+
+---
+
 ## 3. Root CA Key and Certificate Generation
 
 Generate the CA private key using AES-256 encryption and a 4096-bit size for maximum security. Then, restrict the file permissions.
@@ -176,6 +181,9 @@ openssl req -config <CA_DIR>/root-ca.conf \
 > 
 > chmod 400 <CA_DIR>/certs/<CA_NAME>-squid-bundle.pem
 > ```
+
+---
+
 ## 4. Server Certificate Generation (Nodes)
 
 This process must be repeated for each service (Web, Mail, Proxy, etc.) by adapting the variables.
@@ -233,6 +241,8 @@ openssl ca -config <CA_DIR>/root-ca.conf -notext \
   -extfile <CA_DIR>/csr/<NODE_NAME>-csr.conf -batch
 ```
 
+---
+
 ## 5. Verification, Management, and Troubleshooting
 
 ### Verification Commands
@@ -268,6 +278,7 @@ openssl x509 -noout -modulus -in <CA_DIR>/certs/<NODE_NAME>.crt | openssl md5
 
 - **OpenSSL Error `TXT_DB error number 2`:** Indicates an attempt to sign a certificate with a _Subject_ identical to a previously signed entry. Revoke the old entry or modify `unique_subject = no` in the `index.attr` configuration.
 
+---
 
 ## 6. Advanced Features and Next Steps
 
