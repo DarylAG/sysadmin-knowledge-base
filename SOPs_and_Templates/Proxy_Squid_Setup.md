@@ -18,7 +18,7 @@ In this environment, all servers and client hosts are interconnected through a c
   <img src="../Assets/GNS3_LAB" alt="GNS3 Lab Topology" width="80%">
 </p>
 
-Since the proxy virtual machine is deployed directly into this pre-addressed topology, the initial system setup focuses on assigning its designated hostname (`iota-PROXY-1`), configuring static IP parameters (`.4`), and verifying gateway connectivity prior to installing and proxying services.
+Since the DNS server is deployed directly into this pre-addressed topology, the initial system setup focuses on assigning its designated hostname (`alpha-DDNS-1`) and configuring its static IP parameters (`.1`) with an external DNS to download the necessary packages. **Once installed, the server is explicitly set to self-resolve DNS queries (using `127.0.0.1`) prior to configuring and integrating the core BIND9 and Kea services.**
 
 ---
 
