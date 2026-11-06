@@ -1,178 +1,213 @@
-# Configuración de Squid Proxy Transparente con SSL Bumping
+# Standard Operating Procedure (SOP) - Squid Transparent Proxy with SSL Bumping
 
-## Convenciones y Variables
+## Overview and Laboratory Topology
 
-Antes de iniciar, identifica y sustituye las siguientes variables en los comandos y archivos de configuración según tu entorno:
+This Standard Operating Procedure (SOP) outlines the deployment of a **Squid Proxy server in Transparent Mode with SSL Bumping** within a simulated multi-node network infrastructure in GNS3.
 
-- `<HOSTNAME>`: Nombre del servidor proxy (ej. proxy-server).
+In this environment, all servers and client hosts are interconnected through a central switch (`Switch1`) and routed to the external network/Internet via router `R1` and a `NAT1` cloud interface:
 
-- `<RED_LOCAL>`: Rango de tu red local en formato CIDR (ej. 192.168.100.0/24).    
+* **Topology Naming Scheme & Static IPs:**
+  * `alpha-DDNS-1`: Dynamic DNS / DNS Server (`.1`)
+  * `beta-CORREO-1`: Mail Server (`.2`)
+  * `gamma-WEB&FTP-1`: Web & FTP Server (`.3`)
+  * **`iota-PROXY-1`**: Squid Proxy Server (`.4`)
+  * `delta-CA-1`: Internal Certificate Authority (CA)
+  * `pcw01-1` / `pcl01-1`: Windows and Linux Client Workstations
 
-- `<IP_PROXY>`: Dirección IP asignada a la interfaz interna del servidor Squid.
+<p align="center">
+  <img src="../Assets/GNS3_LAB" alt="GNS3 Lab Topology" width="80%">
+</p>
 
-- `<PUERTO_HTTP>`: Puerto de escucha base e intercepción HTTP, por defecto `3128`.
+Since the proxy virtual machine is deployed directly into this pre-addressed topology, the initial system setup focuses on assigning its designated hostname (`iota-PROXY-1`), configuring static IP parameters (`.4`), and verifying gateway connectivity prior to installing and proxying services.
 
-- `<PUERTO_HTTPS>`: Puerto de intercepción HTTPS, por defecto `3129`.
+---
 
-- `<NOMBRE_CA>`: Nombre base de los archivos de tu Autoridad Certificadora (ej. `ca-interna`).
+## Conventions and Environment Variables
 
-## Fase 1: Preparación del Sistema e Instalación
+Replace the placeholder values in this document with your topology's specific settings:
 
-Configura el nombre del host y asegúrate de que el sistema esté actualizado antes de instalar los paquetes necesarios.
+* `<HOSTNAME>`: Server hostname (`iota-PROXY-1`).
+* `<LOCAL_NETWORK>`: Subnet CIDR (e.g., `192.168.1.0/24` or matching your R1 LAN).
+* `<PROXY_IP>`: Assigned static IP for the proxy server (`.4`).
+* `<HTTP_PORT>`: Base listening port (`3128`).
+* `<HTTP_INTERCEPT_PORT>`: HTTP transparent interception port (`3128`).
+* `<HTTPS_PORT>`: HTTPS transparent interception port (`3129`).
+* `<CA_NAME>`: Filename base of your CA certificate from `delta-CA-1` (e.g., `internal-ca`).
 
-Establecer el nombre de host:
-```
+---
+
+## Phase 1: System Preparation and Installation
+
+### 1. Set Hostname
+```bash
 hostnamectl set-hostname <HOSTNAME>
 ```
 
-Actualizar repositorios e instalar Squid y utilidades de firewall:
+### 2. Configure Static IP Address (via NetworkManager / nmcli)
+```bash
+# Example static IP configuration (adjust interface name and subnet to match your setup)
+nmcli connection modify "eth0" ipv4.addresses 192.168.1.4/24 ipv4.gateway 192.168.1.254 ipv4.dns 192.168.1.1 ipv4.method manual
+nmcli connection up "eth0"
 ```
+
+### 3. Update Repositories and Install Packages
+Once connectivity to the internet via R1 / NAT1 is confirmed
+```bash
 apt update && apt upgrade -y
 apt install squid iptables squid-openssl -y
 ```
 
-## Fase 2: Gestión de Certificados para SSL Bumping
+---
 
-Para que Squid intercepte tráfico cifrado (HTTPS), debe actuar como una Autoridad Certificadora (CA) para generar certificados dinámicos. Es obligatorio combinar el certificado público y la clave privada sin contraseña en un único archivo `.pem`.
+## Phase 2: SSL Certificate Management for SSL Bumping
 
-MD
+To enable Squid to intercept encrypted HTTPS traffic, it must act as an internal Certificate Authority (CA) to generate certificates dynamically. It is mandatory to combine the public certificate and the unencrypted private key into a single  `.pem` file.
 
-1. Posiciónate en el directorio de certificados de Squid:
-```
+1. Create and navigate to the dedicated directory for storing Squid's SSL certificates
+```bash
 mkdir -p /etc/squid/certs
 cd /etc/squid/certs/
 ```
 
-2. Genera el archivo `.pem` concatenando el certificado (`.crt`) y la llave privada (`.key`):
-```
-cat <NOMBRE_CA>.crt <NOMBRE_CA>.key > <NOMBRE_CA>.pem
+2. Generate the unified `.pem` file by concatenating the public CA certificate (`.crt`) and the private key (`.key`):
+```bash
+cat <CA_NAME>.crt <CA_NAME>.key > <CA_NAME>.pem
 ```
 
-3. Ajusta los permisos de seguridad (crítico para Squid):
-```
+3. Set strict security permissions on the certificate directory and `.pem` file to ensure only the proxy user has read access
+```bash
 chown -R proxy:proxy /etc/squid/certs
 chmod 755 /etc/squid/certs
-chmod 600 /etc/squid/certs/<NOMBRE_CA>.pem
+chmod 600 /etc/squid/certs/<CA_NAME>.pem
 ```
 
-## Fase 3: Inicialización de la Base de Datos SSL
+---
 
-Squid requiere un directorio para almacenar los certificados generados dinámicamente para cada sitio web.
+## Phase 3: SSL Database Initialization
 
-1. Crea la estructura y asigna permisos:
-```
+Squid requires a dedicated directory to store dynamically generated certificates for inspected HTTPS websites.
+
+1. Create the directory structure and assign ownership to the `proxy` user.
+```bash
 mkdir -p /var/lib/squid
 chown -R proxy:proxy /var/lib/squid
 ```
 
-2. Inicializa la base de datos `ssl_db` (tamaño ajustado a 4MB):
-```
+2. Initialize the ssl_db database (allocated size: 4MB) and ensure the `proxy` user has full permissions over SSL storage:
+```bash
 /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB
 chown -R proxy:proxy /var/lib/squid/ssl_db
 ```
 
-## Fase 4: Configuración de Squid (`squid.conf`)
 
-Respalda el archivo de configuración original:
-```
+---
+## Phase 4: Squid Configuration (`squid.conf`)
+
+Create a safe backup of the default configuration file prior to making modifications:
+```bash
 mkdir -p /etc/squid/backup
 cp /etc/squid/squid.conf /etc/squid/squid.conf.bak
 mv /etc/squid/*.bak /etc/squid/backup/
 ```
 
-Edita el archivo de configuración limpio:
-```
+Open the clean `squid.conf` file:
+```bash
 nano /etc/squid/squid.conf
 ```
 
 ```conf
 # ----------------------------------------------------------------------
-# DEFINICIÓN DE REDES Y PUERTOS SEGUROS
+# NETWORK DEFINITIONS AND SAFE PORTS
 # ----------------------------------------------------------------------
-acl localnet src <RED_LOCAL>    # Define tu red local
-acl Safe_ports port 80          # http
-acl Safe_ports port 443         # https
-acl SSL_ports port 443          # https exclusivo
+acl localnet src <LOCAL_NETWORK>    # Defines local subnet range (e.g., 192.168.1.0/24)
+acl Safe_ports port 80          # HTTP
+acl Safe_ports port 443         # HTTPS
+acl SSL_ports port 443          # HTTPS exclusive
 
-# Denegar peticiones y CONNECT a puertos no seguros
+# Deny requests to unsafe ports and non-SSL CONNECT attempts
 http_access deny !Safe_ports
 http_access deny CONNECT !SSL_ports
 
 # ----------------------------------------------------------------------
-# REGLAS DE CONTROL DE ACCESO (HTTP_ACCESS)
+# ACCESS CONTROL RULES (HTTP_ACCESS)
 # ----------------------------------------------------------------------
 http_access allow localhost
 http_access allow localnet
 http_access deny all
 
 # ----------------------------------------------------------------------
-# PUERTOS Y SSL BUMPING (PROXY TRANSPARENTE)
+# PORTS AND SSL BUMPING (TRANSPARENT PROXY)
 # ----------------------------------------------------------------------
-# Puerto base para Squid 6+ (evita advertencias)
-http_port <PUERTO_HTTP>
+# Base proxy listening port (Squid 6+ requirement)
+http_port <HTTP_PORT>
 
-# Intercepción HTTP transparente
-http_port <PUERTO_HTTP_INTERCEPT> intercept
+# Transparent HTTP interception port
+http_port <HTTP_INTERCEPT_PORT> intercept
 
-# Intercepción HTTPS transparente con certificados dinámicos
-https_port <PUERTO_HTTPS> intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=4MB cert=/etc/squid/certs/<NOMBRE_CA>.pem
+# Transparent HTTPS interception port with dynamic host certificate generation
+https_port <HTTPS_PORT> intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=4MB cert=/etc/squid/certs/<CA_NAME>.pem
 
-# Programa de gestión de base de datos SSL
+# SSL certificate database generator program
 sslcrtd_program /usr/lib/squid/security_file_certgen -s /var/lib/squid/ssl_db -M 4MB
 
-# Reglas de inspección SSL (Paso 1, 2 y 3)
+# SSL inspection steps (Peek and Bump)
 acl step1 at_step SslBump1
 ssl_bump peek step1
 ssl_bump bump all
 
 # ----------------------------------------------------------------------
-# PARÁMETROS DE RED, CACHÉ Y SISTEMA
+# CACHE AND SYSTEM PARAMETERS
 # ----------------------------------------------------------------------
 maximum_object_size 4 MB
 visible_hostname <HOSTNAME>
 ```
-(Nota: Las reglas `Safe_ports`, definición de redes, reglas de acceso básicas y tamaño de objeto se derivan de la configuración proporcionada. Las directivas de `intercept` y `ssl_bump` han sido agregadas para cumplir con el modo transparente requerido).
+**Note:** *The `Safe_ports`directives, baseline network definitions, basic access controls, and maximum object size parameters are derived from the standard Squid baseline setup. The `intercept` and `ssl_bump` directives have been explicitly incorporated to satisfy the transparent proxy requirement for encrypted traffic inspection.*
 
-## Fase 5: Reglas de Firewall (Iptables)
+---
 
-Para que el modo transparente funcione, debes redirigir el tráfico web de los clientes a los puertos de intercepción de Squid.
+## Phase 5: Firewall Rules (Iptables)
 
-Aplica las siguientes reglas NAT:
+### Router Port Forwarding Configuration (R1)
+> **Note:** For transparent interception to function across the network, the gateway router (`R1`) must forward incoming web traffic (TCP ports 80 and 443) targeting external networks to the proxy server.
+
+To enable transparent proxying, redirect incoming client web traffic on standard HTTP and HTTPS ports to Squid's dedicated interception ports.
+```bash
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port <HTTP_PORT>
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port <HTTPS_PORT>
 ```
-iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port <PUERTO_HTTP>
-iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port <PUERTO_HTTPS>
-```
 
-## Gestión, Verificación y Troubleshooting
+## Phase 6: Service Management, Verification, and Troubleshooting
 
-**1. Verificación y Arranque de Servicios:** Siempre valida la sintaxis después de realizar cambios:
-```
+**1. Service Verification and Startup:** Validate the syntax of `/etc/squid/squid.conf` for fatal errors before starting or reloading the daemon
+```bash
 squid -k parse
 ```
 
-Si no hay errores fatales, inicializa los directorios de caché y reinicia el servicio:
-```
+Initialize the swap directory structure for local cache storage
+```bash
 squid -z
+```
+
+Restart the Squid daemon to apply changes and enable automatic startup on system boot
+```bash
 systemctl restart squid
 systemctl enable squid
 ```
 
-_Otros comandos útiles:_ `systemctl status squid`, `systemctl stop squid`.
+_Useful service management commands:_ `systemctl status squid`, `systemctl stop squid`.
 
-**2. Monitoreo de Logs:** Supervisa el tráfico y los errores en tiempo real:
-```
+**2. Log Monitoring and Code Interpretation:** Monitor real-time client requests, traffic flow, and operational events
+```bash
 tail -f /var/log/squid/access.log /var/log/squid/cache.log
 ```
 
-**3. Interpretación de Códigos (access.log):**
+- `TCP_MISS/200`: The requested resource was not found in the local cache. Squid fetched it successfully from the origin server and delivered it to the client.
 
-- `TCP_MISS/200`: La petición no estaba en caché; se descargó correctamente de internet y se envió al cliente.
-
-- `TCP_DENIED/403`: El proxy bloqueó la conexión (revisa tus reglas `http_access` o `acl`).
+- `TCP_DENIED/403`: The request was blocked by the proxy according to the defined  `http_access` or `acl` policies.
 
 
-**4. Corrupción de la Base de Datos SSL (`ssl_db`):** Si los clientes experimentan errores de certificado de manera repentina y los logs muestran fallos en `security_file_certgen`, limpia la base de datos:
-```
+**3. SSL Database Repair (`ssl_db`):** If client machines experience unexpected SSL certificate warnings and log entries report `security_file_certgen` failures, reset and rebuild the dynamic SSL certificate database:
+```bash
 systemctl stop squid
 rm -rf /var/lib/squid/ssl_db/*
 /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB
@@ -180,14 +215,16 @@ chown -R proxy:proxy /var/lib/squid/ssl_db
 systemctl start squid
 ```
 
-## Funciones Avanzadas y Próximos Pasos
+---
 
-Una vez estabilizada la plantilla base, puedes extender las capacidades de tu proxy implementando:
+## Next Steps and Advanced Configurations
 
-- **Filtrado de Contenido Profundo:** Integración de SquidGuard o ufdbGuard para bloquear dominios categorizados (malware, redes sociales, contenido adulto).
+Once the core transparent proxy setup is validated, consider expanding functionality with the following modules:
 
-- **Listas de Control de Acceso (ACLs) Granulares:** Restricción de navegación atada a direcciones MAC específicas en lugar de IPs.
+- **Deep Content Filtering:** Integrated _SquidGuard_ or _ufdbGuard_ to enforce domain blocking based on categories (e.g., social media, adult content, malware domains).
 
-- **Control de Ancho de Banda (Delay Pools):** Limitación de velocidades de descarga generales o para extensiones de archivo específicas (`.mp4`, `.iso`).
+- **Granular Access Control Lists (ACLs):** Restrict access based on client MAC addresses or hardware signatures instead of IP subnets.
 
-- **Políticas Basadas en Horarios:** Bloqueo de acceso a ciertos dominios o servicios fuera de horas laborales.
+- **Bandwith Throttling (Delay Pools):** Define global or extension-specific download speed limits (e.g., throttling `.mp4` or `.iso` file transfers).
+
+- **Time-Based Policies:** Scheduled network access rules to restrict specific domains or web services outside of business hours.
