@@ -99,8 +99,8 @@ chown -R proxy:proxy /var/lib/squid
 chown -R proxy:proxy /var/lib/squid/ssl_db
 ```
 
-
 ---
+
 ## Phase 4: Squid Configuration (`squid.conf`)
 
 Create a safe backup of the default configuration file prior to making modifications:
@@ -175,6 +175,8 @@ To enable transparent proxying, redirect incoming client web traffic on standard
 iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port <HTTP_PORT>
 iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port <HTTPS_PORT>
 ```
+
+---
 
 ## Phase 6: Service Management, Verification, and Troubleshooting
 
